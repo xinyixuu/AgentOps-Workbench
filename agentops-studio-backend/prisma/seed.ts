@@ -1,7 +1,41 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import axios from 'axios';
+import { generateLocalEmbedding } from '../src/modules/rag/utils/local-embedding';
 
 const prisma = new PrismaClient();
+
+async function generateSeedEmbedding(text: string): Promise<number[]> {
+  const apiKey = process.env.QWEN_API_KEY;
+  const baseUrl = (process.env.QWEN_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1')
+    .replace(/\/chat\/completions\/?$/, '')
+    .replace(/\/$/, '');
+
+  if (!apiKey || apiKey === 'your-qwen-api-key-here') {
+    return generateLocalEmbedding(text);
+  }
+
+  try {
+    const response = await axios.post(
+      `${baseUrl}/embeddings`,
+      {
+        model: 'text-embedding-v3',
+        input: text,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        timeout: 8000,
+      },
+    );
+
+    return response.data.data[0].embedding;
+  } catch {
+    return generateLocalEmbedding(text);
+  }
+}
 
 async function main() {
   console.log(`Start seeding ...`);
@@ -21,11 +55,17 @@ async function main() {
   // 2. 创建或更新默认知识库
   const defaultKb = await prisma.knowledgeBase.upsert({
     where: { name_userId: { name: '默认知识库', userId: adminUser.id } },
-    update: {},
+    update: {
+      description: '系统自动创建的默认知识库，包含 AgentOps Studio 的功能介绍。',
+      topK: 3,
+      similarityThreshold: 0.1,
+    },
     create: {
       name: '默认知识库',
       description: '系统自动创建的默认知识库，包含 AgentOps Studio 的功能介绍。',
       userId: adminUser.id,
+      topK: 3,
+      similarityThreshold: 0.1,
     },
   });
   console.log(`✅ Created or found knowledge base: ${defaultKb.name}`);
@@ -59,11 +99,12 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化工作流编排
   await prisma.documentChunk.deleteMany({
     where: { documentId: document.id },
   });
+  const docEmbedding = await generateSeedEmbedding(docContent);
   await prisma.documentChunk.create({
     data: {
       documentId: document.id,
       content: docContent,
-      embedding: JSON.stringify([]),
+      embedding: JSON.stringify(docEmbedding),
       chunkIndex: 0,
       startIndex: 0,
       endIndex: docContent.length,
@@ -124,16 +165,26 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化工作流编排
         knowledgeBaseId: defaultKb.id,
         query: '{{question}}',
         topK: 3,
-        similarityThreshold: 0.7,
+        similarityThreshold: 0.1,
+      },
+    },
+    {
+      id: 'time_demo',
+      type: 'skill',
+      position: { x: 620, y: 180 },
+      data: {
+        label: '时间工具',
+        skillId: 'time',
+        parameters: {},
       },
     },
     {
       id: 'output_demo',
       type: 'output',
-      position: { x: 620, y: 180 },
+      position: { x: 900, y: 180 },
       data: {
         label: '输出',
-        outputValue: '{{rag_demo.documents}}',
+        outputValue: 'RAG 召回片段：{{rag_demo.documents}}\n\n工具调用时间：{{time_demo.result.output.datetime}}',
       },
     },
   ];
@@ -147,6 +198,11 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化工作流编排
     {
       id: 'edge_rag_output',
       source: 'rag_demo',
+      target: 'time_demo',
+    },
+    {
+      id: 'edge_time_output',
+      source: 'time_demo',
       target: 'output_demo',
     },
   ];
@@ -162,7 +218,7 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化工作流编排
     await prisma.workflow.create({
       data: {
         name: demoWorkflowName,
-        description: '内置示例工作流：开始 → RAG检索 → 输出',
+        description: '内置示例工作流：开始 → RAG检索 → 时间工具 → 输出',
         applicationId: demoApp.id,
         nodes: JSON.stringify(demoNodes),
         edges: JSON.stringify(demoEdges),
@@ -172,7 +228,7 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化工作流编排
     await prisma.workflow.update({
       where: { id: existingWorkflow.id },
       data: {
-        description: '内置示例工作流：开始 → RAG检索 → 输出',
+        description: '内置示例工作流：开始 → RAG检索 → 时间工具 → 输出',
         nodes: JSON.stringify(demoNodes),
         edges: JSON.stringify(demoEdges),
       },

@@ -1,47 +1,48 @@
-# AgentOps Studio
+# AgentOps Workbench
 
-AgentOps Studio 是一个面向 AI Agent 应用开发的可视化编排与调试平台。项目提供应用管理、React Flow 工作流编辑器、RAG 知识库、Skill 工具系统和 AI 调试中心，用于把 LLM、知识库、工具调用和人工输入组织成可运行、可调试、可沉淀的 AI 工作流。
+AgentOps Workbench 是一个面向 AI Agent 应用开发的可视化工作流编排与调试平台。它把 React Flow 工作流画布、RAG 知识库、Schema-based Tool Registry、Run / Step Trace 和 SSE 事件流串成一条可运行、可观测、可复盘的 Agent demo。
 
-## 当前功能
+## Demo 看点
 
-### 应用与工作流编排
+- 可视化编排：用 React Flow 配置开始、RAG、工具、条件分支、LLM、输出等节点。
+- Run / Step Trace：每次运行都会持久化 Run、Step、TraceEvent，并在调试中心显示时间线。
+- RAG 证据链：支持文档上传、切片、embedding、TopK 召回、相似度分数和失败 diagnostics。
+- Tool Registry：统一内置工具、自定义 HTTP 工具、MCP 示例工具的元信息、Zod 校验和调用结果。
+- 权限边界：JWT 登录，工作流运行、RAG retrieve、自定义工具执行都带 owner 校验。
+- 默认演示：seed 后自带「默认RAG演示应用」，执行后能同时看到 RAG 召回和工具调用 Trace。
 
-- 应用管理：创建、编辑、发布、取消发布和删除应用。
-- 可视化工作流：基于 React Flow 编辑节点和连线。
-- 支持节点：开始、用户输入、LLM、RAG 检索、条件分支、Skill 工具、输出。
-- 工作流运行：后端根据 nodes / edges 构建执行图，支持普通运行和 SSE 流式状态回传。
-- 默认示例：seed 会创建一个「默认RAG演示应用」和「默认RAG工作流」。
+## 架构总览
 
-### RAG 知识库
+```mermaid
+flowchart LR
+  A["React / Vite Frontend"] --> B["NestJS API"]
+  B --> C["Workflow Runtime"]
+  C --> D["RAG Service"]
+  C --> E["Tool Registry"]
+  C --> F["Trace Service"]
+  D --> G["KnowledgeBase / DocumentChunk"]
+  E --> H["Builtin / Custom / MCP Tools"]
+  F --> I["WorkflowExecution / WorkflowStep / TraceEvent"]
+  B --> J["Prisma + SQLite"]
+```
 
-- 知识库 CRUD。
-- 文档上传、文本切片、chunk 存储和检索。
-- 知识库配置：embedding model、chunk size、chunk overlap、topK、similarity threshold。
-- 调试中心可关联知识库进行 AI 聊天，并展示参考文档片段。
+## 默认demo链路
 
-### Skill 与 MCP
-
-- Skill 模块支持内置工具和自定义工具。
-- 当前内置 Skill：时间、HTTP 请求、JSON parse/stringify、正则匹配。
-- 工作流中的 Skill 节点可调用工具执行结果。
-- MCP 模块提供工具发现和调用示例，目前包含 echo / calculator 等轻量示例能力。
-
-### AI 调试中心
-
-- AI Chat：支持普通聊天、RAG 关联知识库、会话历史。
-- Workflow Debug：选择应用工作流并运行，查看节点执行反馈。
-- 支持 SSE 返回流式执行状态，前端通过 `eventsource-parser` 解析。
-
-### 用户与数据
-
-- JWT 登录鉴权。
-- Prisma ORM + SQLite 数据库。
-- 统一响应拦截器、全局异常过滤器、全局 ValidationPipe。
-- 默认演示账号：`admin / admin123`。
+```mermaid
+flowchart TD
+  A["登录 admin / admin123"] --> B["打开调试中心"]
+  B --> C["选择默认RAG演示应用"]
+  C --> D["选择默认RAG工作流"]
+  D --> E["执行工作流"]
+  E --> F["RAG 检索默认知识库"]
+  F --> G["time 工具调用"]
+  G --> H["输出结果"]
+  H --> I["查看 Run / Step Trace"]
+```
 
 ## 技术栈
 
-### 前端
+前端：
 
 - React 18 + Vite
 - React Router v6
@@ -51,14 +52,15 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化编排与调试
 - Axios
 - eventsource-parser
 
-### 后端
+后端：
 
 - NestJS
 - Prisma ORM
 - SQLite
 - JWT + Passport
 - class-validator / class-transformer
-- Qwen-compatible Chat API
+- Zod
+- Qwen-compatible Chat / Embedding API
 - Server-Sent Events
 
 ## 目录结构
@@ -72,12 +74,11 @@ AgentOps Studio 是一个面向 AI Agent 应用开发的可视化编排与调试
 │   ├── src/store               # Zustand store slices
 │   └── src/types               # 前端类型定义
 ├── agentops-studio-backend
-│   ├── prisma                  # Prisma schema、SQLite dev.db、seed
+│   ├── prisma                  # Prisma schema、seed
 │   └── src
 │       ├── common              # Guard、decorator、filter、interceptor、Prisma service
 │       ├── config              # 环境配置
-│       └── modules             # user、app、workflow、rag、skill、mcp、ai
-└── knowledge                   # Obsidian 项目知识库
+│       └── modules             # user、app、workflow、rag、skill、tool-registry、mcp、ai
 ```
 
 ## 快速开始
@@ -111,9 +112,11 @@ PORT=3000
 DATABASE_URL="file:./dev.db"
 JWT_SECRET=your-secret-key-here
 JWT_EXPIRES_IN=7d
-QWEN_API_KEY=your-api-key
-QWEN_BASE_URL=https://api.silra.cn/v1/chat/completions
+QWEN_API_KEY=your-qwen-api-key-here
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ```
+
+没有配置可用的 `QWEN_API_KEY` 时，RAG 会使用本地 deterministic embedding 兜底，默认 demo 仍可召回默认文档片段。
 
 ### 2. 启动前端
 
@@ -143,7 +146,7 @@ http://localhost:3000
 - 默认知识库：`默认知识库`
 - 默认文档：`AgentOps Studio 功能介绍.md`
 - 默认应用：`默认RAG演示应用`
-- 默认工作流：开始 -> RAG 检索 -> 输出
+- 默认工作流：开始 -> RAG 检索 -> 时间工具 -> 输出
 
 ## 验证路径
 
@@ -151,13 +154,16 @@ http://localhost:3000
 
 1. 打开 `http://localhost:5173`。
 2. 使用 `admin / admin123` 登录。
-3. 进入「工作台」，确认存在「默认RAG演示应用」。
-4. 进入「知识库」，确认存在「默认知识库」和默认文档。
-5. 进入「调试中心」的 AI 聊天，选择默认知识库后提问：
-
-```text
-AgentOps Studio 有什么核心特性？
-```
+3. 进入「知识库」，确认存在「默认知识库」和默认文档。
+4. 进入「调试中心」。
+5. 切到「工作流执行」。
+6. 选择「默认RAG演示应用」和「默认RAG工作流」。
+7. 点击「执行工作流」。
+8. 查看 Run / Step Trace，其中应该出现：
+   - `RAG 召回`
+   - `工具调用`
+   - `Step 结束`
+   - `Run 结束`
 
 ### API 方式
 
@@ -176,12 +182,12 @@ curl -s http://localhost:3000/api/rag/knowledge-bases \
 curl -s -X POST http://localhost:3000/api/rag/retrieve \
   -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"query":"AgentOps Studio 有什么核心特性？","knowledgeBaseId":"KB_ID","topK":3}'
+  -d '{"query":"AgentOps Studio 有什么核心特性？","knowledgeBaseId":"KB_ID","topK":3,"similarityThreshold":0.1}'
 ```
 
 ## 常用脚本
 
-### 后端
+后端：
 
 ```bash
 cd agentops-studio-backend
@@ -192,7 +198,7 @@ npx prisma db push
 npx prisma db seed
 ```
 
-### 前端
+前端：
 
 ```bash
 cd agentops-studio-frontend
@@ -204,6 +210,7 @@ npm run preview
 ## 当前边界
 
 - RAG 当前主要处理文本类上传内容，向量存储使用 JSON 字符串落库。
-- MCP 模块目前是示例工具发现/调用能力，尚未与 Skill 系统完全统一为 Tool Registry。
-- 工作流已有执行记录模型，但前端 Trace / Step 级可观测性仍可继续增强。
+- Tool Registry 已统一内置工具、自定义 HTTP 工具和 MCP 示例工具，但尚未接入外部 MCP server。
+- 工作流 LLM 节点还没有 token 级 Trace。
+- Trace 已支持持久化和历史查看，但还没有复杂筛选、对比和 replay。
 - 前端构建可能出现 chunk size warning，不影响功能运行。

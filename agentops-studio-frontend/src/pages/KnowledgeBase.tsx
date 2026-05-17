@@ -317,7 +317,7 @@ const KnowledgeBase: React.FC = () => {
               <InboxOutlined style={{ fontSize: 28, color: 'var(--c-accent)' }} />
             </p>
             <p className="doc-dragger-text">拖拽文件到此处，或点击上传</p>
-            <p className="doc-dragger-hint">支持 txt、pdf、md 等格式，上传后即可用于 RAG 检索</p>
+            <p className="doc-dragger-hint">支持 txt、md、json、csv、log、yaml 等文本类文件，上传后即可用于 RAG 检索</p>
           </Dragger>
 
           {/* Document list */}

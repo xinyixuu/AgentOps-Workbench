@@ -13,6 +13,7 @@ import {
   LoadingOutlined,
   MinusCircleOutlined,
   ClearOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import { useStore } from '../store'
@@ -84,6 +85,17 @@ interface WorkflowRunTrace {
   traceEvents: TraceEventItem[]
 }
 
+interface WorkflowRunSummary {
+  id: string
+  workflowId: string
+  status: string
+  duration?: number | null
+  startedAt: string
+  completedAt?: string | null
+  stepCount: number
+  eventCount: number
+}
+
 const Debug: React.FC = () => {
   const { isLoading, setIsLoading, apps, fetchApps, knowledgeBases, fetchKnowledgeBases } = useStore()
   const [input, setInput] = useState('')
@@ -101,6 +113,8 @@ const Debug: React.FC = () => {
   const [currentRunId, setCurrentRunId] = useState('')
   const [traceEvents, setTraceEvents] = useState<TraceEventItem[]>([])
   const [runTrace, setRunTrace] = useState<WorkflowRunTrace | null>(null)
+  const [workflowRuns, setWorkflowRuns] = useState<WorkflowRunSummary[]>([])
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState('')
   const [wfStatus, setWfStatus] = useState<'idle' | 'running' | 'success' | 'failed'>('idle')
   const [isStreaming, setIsStreaming] = useState(false)
   const [streamingContent, setStreamingContent] = useState('')
@@ -121,8 +135,16 @@ const Debug: React.FC = () => {
     setSelectedAppId(appId)
     setSelectedWorkflowId('')
     setWorkflows([])
+    setWorkflowRuns([])
+    setSelectedHistoryRunId('')
     setWorkflowInputsText('{}')
     setRequiredInputFields([])
+    setWorkflowResult(null)
+    setNodeStates({})
+    setCurrentRunId('')
+    setTraceEvents([])
+    setRunTrace(null)
+    setWfStatus('idle')
     if (appId) {
       try {
         const response = await request.get(`/workflows/app/${appId}`) as any
@@ -136,9 +158,18 @@ const Debug: React.FC = () => {
   // 选择工作流时，获取详情并自动预填充 UserInput 节点所需的输入参数
   const handleWorkflowChange = async (workflowId: string) => {
     setSelectedWorkflowId(workflowId)
+    setWorkflowResult(null)
+    setNodeStates({})
+    setCurrentRunId('')
+    setTraceEvents([])
+    setRunTrace(null)
+    setSelectedHistoryRunId('')
+    setWfStatus('idle')
     if (!workflowId) {
       setWorkflowInputsText('{}')
       setRequiredInputFields([])
+      setWorkflowRuns([])
+      setSelectedHistoryRunId('')
       return
     }
     try {
@@ -162,10 +193,13 @@ const Debug: React.FC = () => {
       } else {
         setWorkflowInputsText('{}')
       }
+      await fetchWorkflowRuns(workflowId)
     } catch (err) {
       console.error('获取工作流详情失败:', err)
       setWorkflowInputsText('{}')
       setRequiredInputFields([])
+      setWorkflowRuns([])
+      setSelectedHistoryRunId('')
     }
   }
 
@@ -301,6 +335,7 @@ const Debug: React.FC = () => {
     setCurrentRunId('')
     setTraceEvents([])
     setRunTrace(null)
+    setSelectedHistoryRunId('')
     setWfStatus('running')
 
     try {
@@ -401,6 +436,8 @@ const Debug: React.FC = () => {
       setWfStatus(prev => prev === 'running' ? 'success' : prev)
       if (runIdFromStream) {
         await fetchRunTrace(runIdFromStream)
+        setSelectedHistoryRunId(runIdFromStream)
+        await fetchWorkflowRuns(selectedWorkflowId)
       }
     } catch {
       message.error('工作流执行失败')
@@ -416,15 +453,43 @@ const Debug: React.FC = () => {
     setCurrentRunId('')
     setTraceEvents([])
     setRunTrace(null)
+    setSelectedHistoryRunId('')
     setWfStatus('idle')
   }
 
-  const fetchRunTrace = async (runId: string) => {
+  const fetchWorkflowRuns = async (workflowId: string) => {
+    try {
+      const response = await request.get(`/workflows/${workflowId}/runs`) as any
+      setWorkflowRuns((response.data || response || []) as WorkflowRunSummary[])
+    } catch (err) {
+      console.error('获取 Run 历史失败:', err)
+      setWorkflowRuns([])
+    }
+  }
+
+  const fetchRunTrace = async (runId: string): Promise<WorkflowRunTrace | undefined> => {
     try {
       const response = await request.get(`/workflows/runs/${runId}`) as any
-      setRunTrace((response.data || response) as WorkflowRunTrace)
+      const trace = (response.data || response) as WorkflowRunTrace
+      setRunTrace(trace)
+      return trace
     } catch (err) {
       console.error('获取 Trace 详情失败:', err)
+      return undefined
+    }
+  }
+
+  const handleHistoryRunChange = async (runId?: string) => {
+    setSelectedHistoryRunId(runId || '')
+    if (!runId) return
+
+    setNodeStates({})
+    setTraceEvents([])
+    setCurrentRunId(runId)
+    const trace = await fetchRunTrace(runId)
+    if (trace) {
+      setWorkflowResult(trace.context)
+      setWfStatus(trace.status === 'running' ? 'running' : trace.status === 'failed' ? 'failed' : 'success')
     }
   }
 
@@ -481,6 +546,16 @@ const Debug: React.FC = () => {
   const nodeExecList = Object.values(nodeStates)
   const timelineEvents = runTrace?.traceEvents?.length ? runTrace.traceEvents : traceEvents
   const persistedSteps = runTrace?.steps || []
+  const formatRunOption = (run: WorkflowRunSummary) => {
+    const startedAt = new Date(run.startedAt).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+    const duration = typeof run.duration === 'number' ? `${run.duration}ms` : '进行中'
+    return `${startedAt} · ${run.status} · ${duration}`
+  }
 
   return (
     <div className="debug-page">
@@ -678,6 +753,19 @@ const Debug: React.FC = () => {
             >
               {workflows.map(wf => (
                 <Option key={wf.id} value={wf.id}>{wf.name}</Option>
+              ))}
+            </Select>
+            <Select
+              placeholder="历史 Run"
+              allowClear
+              suffixIcon={<HistoryOutlined />}
+              onChange={handleHistoryRunChange}
+              value={selectedHistoryRunId || undefined}
+              disabled={!selectedWorkflowId || workflowRuns.length === 0}
+              style={{ width: 260 }}
+            >
+              {workflowRuns.map(run => (
+                <Option key={run.id} value={run.id}>{formatRunOption(run)}</Option>
               ))}
             </Select>
             <Button

@@ -5,6 +5,7 @@ import { UpdateKnowledgeBaseDto } from '../dto/update-knowledge-base.dto';
 import axios from 'axios';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
+import { generateLocalEmbedding } from '../utils/local-embedding';
 
 export interface RetrieveOptions {
   topK?: number;
@@ -267,12 +268,17 @@ export class RAGService {
     let chunksWithEmptyEmbedding = 0;
 
     // 在内存中计算相似度 (针对 SQLite 的权宜之计)
+    const localQueryVector = generateLocalEmbedding(query);
+
     const scoredChunks = allChunks.map(chunk => {
-      const chunkEmbedding = JSON.parse(chunk.embedding || '[]');
-      if (!Array.isArray(chunkEmbedding) || chunkEmbedding.length === 0) {
+      const storedEmbedding = this.parseEmbedding(chunk.embedding);
+      const canUseStoredEmbedding = storedEmbedding.length > 0 && storedEmbedding.length === queryVector.length;
+      const chunkEmbedding = canUseStoredEmbedding ? storedEmbedding : generateLocalEmbedding(chunk.content);
+      if (storedEmbedding.length === 0) {
         chunksWithEmptyEmbedding += 1;
       }
-      const similarity = this.cosineSimilarity(queryVector, chunkEmbedding);
+      const comparableQueryVector = canUseStoredEmbedding ? queryVector : localQueryVector;
+      const similarity = this.cosineSimilarity(comparableQueryVector, chunkEmbedding);
       return {
         id: chunk.id,
         chunkId: chunk.id,
@@ -332,6 +338,17 @@ export class RAGService {
     return isNaN(similarity) ? 0 : similarity;
   }
 
+  private parseEmbedding(value: string | null): number[] {
+    if (!value) return [];
+
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) && parsed.every((item) => typeof item === 'number') ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
   private getNoRecallReason(input: {
     queryEmbeddingEmpty: boolean;
     totalChunks: number;
@@ -378,12 +395,13 @@ export class RAGService {
   // 生成向量嵌入
   private async generateEmbedding(text: string): Promise<number[]> {
     if (!this.qwenApiKey || this.qwenApiKey === 'your-qwen-api-key-here') {
-      return [];
+      return generateLocalEmbedding(text);
     }
 
     try {
+      const baseUrl = this.qwenBaseUrl.replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
       const response = await axios.post(
-        `${this.qwenBaseUrl}/embeddings`,
+        `${baseUrl}/embeddings`,
         {
           model: 'text-embedding-v3',
           input: text,
@@ -393,13 +411,14 @@ export class RAGService {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${this.qwenApiKey}`,
           },
+          timeout: 8000,
         }
       );
 
       return response.data.data[0].embedding;
     } catch (error) {
       this.logger.warn(`Embedding generation failed: ${error instanceof Error ? error.message : error}`);
-      return [];
+      return generateLocalEmbedding(text);
     }
   }
 
